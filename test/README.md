@@ -7,6 +7,10 @@ python test/compare_PE.py data/ana_PE/one.pq output/PE/one.pq
 python test/compare_tvE.py data/ana_tvE/one.h5 output/tvE/one.h5
 ```
 
+The equivalent Make targets are `make test/PE/one` and `make test/tvE/one`.
+They compare existing files only and do not run any computation stages.
+Set `PYTHON=/path/to/python` to select an interpreter; the default is `python`.
+
 `one` is the example case and is not scored. The scored cases are `0`, `1`, and
 `2`; replace `one` with the case ID to check each case's outputs.
 
@@ -20,7 +24,10 @@ running GPU computations. Every invocation reruns the check, prints results
 to the terminal, and saves the same text in `output/PE/<id>.pq.compare.txt` or
 `output/tvE/<id>.h5.compare.txt`.
 
-To run the pipeline and then both checks, use `python scripts/run.py <id> --compare`.
+To run the pipeline and then both checks, use `python scripts/run.py <id> --compare`
+or `make -B output/tvE/<id>.h5 COMPARE=1`. Make normally skips up-to-date outputs;
+`-B` is required for scored runs to recompute all three stages.
+Both entry points use the same timing and comparison code.
 After a successful pipeline run, the runner executes both checks even if one fails,
 and returns a nonzero exit code if either check fails.
 The runner prints pipeline timing, comparison output, the corresponding
@@ -58,8 +65,9 @@ the configured absolute and relative tolerances.
 
 ## Comparison rules
 
-Set `ATOL` and `RTOL` in [comparison.py](comparison.py) to choose the absolute and
-relative tolerances, and `MAX_ERRORS` to set the maximum number of reported issues.
+The official `ATOL` and `RTOL` in [comparison.py](comparison.py) are both `1e-6`;
+contestants must not change these values or the comparison code.
+`MAX_ERRORS` limits the number of reported issues to ten.
 Floating-point values pass when
 `abs(candidate - reference) <= ATOL + RTOL * abs(reference)`.
 Record keys, counts, flags, and other discrete values must
@@ -74,6 +82,10 @@ matter.
   with the tolerance. Vertex fields (`x/y/z/E/t`) use only the first `count`
   slots in saved order. Event-level numeric fields are checked across all stored
   copies, reporting at most one issue per field per step.
+
+The checks cover every saved PE state and reconstruction step. They do not
+compare only the last 30% of a chain, summary statistics, or unordered vertices.
+Lower-precision implementations must still satisfy these same checks.
 
 Matching missing values in PE `q` are allowed because `q` is a placeholder when
 MMSE is disabled. A missing value on only one side fails. Other NaN or infinite

@@ -1,15 +1,15 @@
 # PMT waveform reconstruction pipeline
 
 本仓库提取了一条实际粒子物理实验数据分析流程中的核心计算：从 PMT 波形采样
-光电子（PE）到达时间，再联合全部 PMT 完成最多双顶点的事例重建。统计模型、
-公式和数据契约见
-[`docs/recon.tex`](docs/recon.tex)。
+光电子（PE）到达时间，再联合全部 PMT 完成最多双顶点的事例重建。赛题背景、
+固定计算参数与评测要求见 [`problem.md`](problem.md)。
 
 ## 仓库构成
 
 | 路径 | 内容 |
 |---|---|
 | `scripts/run.py` | 使用当前 Python 环境运行三阶段计算、记录耗时并按需比较结果 |
+| `Makefile` | 完整流程和独立比较的 Make 入口，完整运行复用 `scripts/run.py` |
 | `src/fsmp_prior.py` | 用 LucyDDM 从原始波形生成 FSMP proposal |
 | `src/fsmp.py` | 执行波形层 FSMP，保存 PE 时间序列样本 |
 | `src/main.py` | 执行最多双顶点的事例层重建 |
@@ -17,7 +17,6 @@
 | `src/wave_reader.py`, `src/wave_reader_impl.py` | 原始波形读取与通道映射 |
 | `src/analysis/` | LucyDDM、FSMP batch/proposal、GPU kernel 和输出辅助代码 |
 | `test/` | 基准与待测输出的数值一致性检查 |
-| `docs/recon.tex` | 算法和数据格式的完整技术文档 |
 
 `data/` 是外部输入目录；`output/sparsify/`、`output/PE/` 和 `output/tvE/` 是运行时生成的中间或
 最终产物。这些目录均不纳入 Git。
@@ -72,7 +71,7 @@ CUDA_VISIBLE_DEVICES=0 /path/to/python scripts/run.py one
 `src/fsmp.py` 和 `src/main.py`，记录分阶段及总耗时。任何阶段失败都会立即停止。
 每次调用都会从第一阶段重新计算并覆盖对应产物和日志；需要保留的结果请先归档。
 
-进程临时目录以及 CuPy、CUDA、XDG、Python 字节码和 probe 缓存统一位于
+进程临时目录以及 CuPy、CUDA、XDG 和 Python 字节码缓存统一位于
 `output/tmp/`。每个阶段的标准输出写入 `<target>.log`，标准错误直接输出到
 当前进程的 stderr。
 
@@ -106,9 +105,33 @@ data/raw/<id>.h5
 
 每个阶段的产物旁会生成 `.log`。
 
+### 使用 Make
+
+安装 GNU Make 后，也可以使用以下入口：
+
+```bash
+make output/tvE/one.h5                # 调试：增量运行
+make -B output/tvE/one.h5 COMPARE=1   # 完整运行并校验
+```
+
+Make 默认按输入和源码的时间戳增量执行，结果已是最新时会跳过。
+**正式评测必须加 `-B` 从头重算，并用 `COMPARE=1` 校验。**
+
+Make 调用同一 Python 运行器，日志与计时格式相同。默认使用当前环境的 `python`，
+也可传入 `PYTHON=/path/to/python`。旧目标 `tvE/<id>.h5` 仍可使用，产物统一位于 `output/`。
+集群计算仍须通过 Slurm 提交。
+
+只比较已有结果、不产生完整流程计时：
+
+```bash
+make test/PE/one
+make test/tvE/one
+```
+
 ## 正式评测与提交
 
-正式评测需在 Slurm 作业中分别执行 `python scripts/run.py <id> --compare`，
+正式评测需在 Slurm 作业中分别执行 `python scripts/run.py <id> --compare`
+或等价的 `make -B output/tvE/<id>.h5 COMPARE=1`，
 其中 `<id>` 依次为 `0`、`1`、`2`。集群环境和作业脚本见
 [`problem.md`](problem.md#slurm-作业脚本)。
 
@@ -141,11 +164,5 @@ python test/compare_tvE.py data/ana_tvE/one.h5 output/tvE/one.h5
 或执行错误；脚本退出码与状态码相同。
 完整比较规则见 [`test/README.md`](test/README.md)。
 
-## 编译技术文档
-
-`docs/recon.tex` 使用 XeLaTeX：
-
-```bash
-cd docs
-latexmk -xelatex recon.tex
-```
+可尝试的数值精度、GPU 计算、数据传输、文件 I/O 和双卡并行优化见
+[`problem.md`](problem.md#可优化方向)，所有优化均须通过上述校验。
