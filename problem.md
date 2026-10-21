@@ -23,7 +23,7 @@ SuperJUNO 从这一科学分析任务中提取了一条完整计算流程：先�
 本赛题要求选手在**保持规定数学模型、采样规则、计算规模和结果精度**的前提下，优化完整流程，尽可能缩短运行时间。
 
 - 运行平台：**并行科技 NVIDIA GeForce RTX 4090 集群，限单节点，每次运行最多使用两张 GPU**。
-- 软件环境：通过 module 加载 CUDA 12.4 和 Miniforge3 24.11，使用 Python 3.11 的 `juno` Conda 环境，其他依赖见 `pyproject.toml`。
+- 软件环境：通过 module 加载 Miniforge3 24.11，在 Python 3.11 的 `juno` Conda 环境中安装 CUDA 12.4，其他依赖见 `pyproject.toml`；使用 Make 入口时还需 GNU Make。
 - 作业调度：使用 **Slurm**，通过 `sbatch` 提交计算任务。
 - 计算任务：完成先验生成、FSMP 采样和事例重建三个阶段，提交 PE 样本、重建采样链及完整计时记录。
 
@@ -31,10 +31,9 @@ SuperJUNO 从这一科学分析任务中提取了一条完整计算流程：先�
 
 - [源码和数据下载地址](https://cloud.tsinghua.edu.cn/d/0bc5df5078e84dca81a2/)：源码与输入数据及参考结果。
 - [README.md](README.md)：数据准备、环境配置与运行入口。
-- [docs/recon.tex](docs/recon.tex)：物理背景、统计模型、数据格式和随机量映射。
 - [test/README.md](test/README.md)：当前 PE、tvE 结果的比较规则。
 
-本文的运行流程与评测要求以当前仓库的 `scripts/run.py` 和 `test/` 为准；论文用于理解科学背景和方法。
+Python 与 Make 入口共用当前仓库的 `scripts/run.py` 和 `test/`，运行流程、计时与比较规则相同；论文用于理解科学背景和方法。
 
 ## 登录集群
 
@@ -56,7 +55,7 @@ ssh -i ~/.ssh/id_ed25519 TEAM_USER@LOGIN_NODE
 
 ```bash
 cd ~/run
-git clone git@git.tsinghua.edu.cn:scc/thuscc26/superjuno.git superjuno
+git clone git@github.com:thu-scc/superjuno.git superjuno
 cd superjuno
 ```
 
@@ -64,6 +63,7 @@ cd superjuno
 
 ```text
 superjuno/
+├── Makefile               # 完整流程与独立比较入口，复用 Python 运行器
 ├── scripts/run.py         # 运行三阶段计算、计时并按需调用正确性比较
 ├── src/
 │   ├── fsmp_prior.py      # 从原始波形构造采样先验
@@ -77,8 +77,7 @@ superjuno/
 │   ├── compare_PE.py      # PE 结果比较
 │   ├── compare_tvE.py     # 重建结果比较
 │   └── comparison.py      # 公共比较逻辑与容差设置
-├── pyproject.toml        # Python 项目与依赖配置
-└── docs/recon.tex        # 算法和数据格式说明
+└── pyproject.toml        # Python 项目与依赖配置
 ```
 
 ### 数据准备
@@ -125,12 +124,14 @@ data/
 cd ~/run/superjuno
 module load miniforge3/24.11
 conda create -n juno python=3.11 pip
-source activate juno
+CONDA_BASE=$(conda info --base)
+source "$CONDA_BASE/etc/profile.d/conda.sh"
+conda activate juno
 conda install cuda=12.4
-pip install -e .
+python -m pip install -e .
 ```
 
-环境只需创建一次；后续登录和每次作业中仍需加载上述模块并激活 `juno`。`source` 命令用于初始化当前 Shell 的 Conda 激活功能。依赖见 [pyproject.toml](pyproject.toml)；从源码安装 CuPy 需要 CUDA 开发工具和编译环境。项目中的 CUDA 内核由 CuPy 在运行时编译并缓存，不需要单独生成可执行文件。
+环境只需创建一次；后续登录和每次作业中仍需加载上述模块并激活 `juno`。`source` 命令用于初始化当前 Shell 的 Conda 激活功能。依赖见 [pyproject.toml](pyproject.toml)；从源码安装 CuPy 需要 CUDA 开发工具和编译环境。项目中的 CUDA 内核由 CuPy 在运行时编译并缓存，不需要单独生成可执行文件。Make 入口使用同一 Python 环境，无需重新安装一套依赖。
 
 ## 运行
 
@@ -147,6 +148,8 @@ pip install -e .
 FSMP 通过增加、删除或移动一个 PE 来提出候选解释，按规定的概率接受或拒绝；重建阶段联合所有 PMT 的观测与响应，更新 PE 样本、顶点数、位置和时间。没有记录到 PE 的通道同样参与似然计算，不能删去。
 
 所有随机阶段固定 seed 为 `0`，随机量与波形、事例、通道、采样步骤及用途的对应关系必须保持。参考运行器将事例重建分成 10 个事例块；分块数和 GPU batch 大小可以调整，但每条链的计算量与采样规则必须保持。
+
+可以尝试将部分双精度计算改为单精度或混合精度，但仍须通过完整 PE、tvE 校验；不得改变随机量的生成规则或放宽比较容差。具体建议见[可优化方向](#可优化方向)。
 
 最终 HDF5 文件中的 `/Recon` 形状为 `(2, number_of_events, 2000)`，保存两个顶点槽位、各事例和完整采样步骤。主要字段包括 `EventID`、`step`、`count`、`x/y/z`、`E`、`t`、`NPE`、`Likelihood` 和 `epsilon`。输出必须保留规定的数据集、字段、单位及逻辑内容。
 
@@ -185,6 +188,17 @@ python scripts/run.py "$input_id" --compare
 
 该示例申请单节点、1 张 GPU。
 
+也可以将脚本中最后一行替换为 Make 入口：
+
+```bash
+make -B "output/tvE/${input_id}.h5" COMPARE=1
+```
+
+Make 默认增量运行，已有最新结果时会跳过。**正式评测必须加 `-B` 从头重算，并保留 `COMPARE=1`。**
+两种入口共用计时与校验逻辑，每次作业选用一个即可。
+
+`make test/PE/<id>` 和 `make test/tvE/<id>` 只比较已有结果，不产生正式计时。
+
 ### 提交与查看结果
 
 在仓库目录提交作业。**必须先创建日志目录**，Slurm 会在脚本执行前打开标准输出和标准错误文件。将 `GPU_PARTITION` 替换为主办方分配的 4090 分区名。先用示例点 `one` 验证流程：
@@ -216,7 +230,7 @@ done
 
 ### 正确性
 
-三个正式测试点 `0`、`1`、`2` 的提交结果必须分别在 Slurm 作业中由 `python scripts/run.py <id> --compare` 生成。每个测试点的流水线及 PE、tvE 两项比较均须成功，作业标准输出中的 `Pipeline exit code`、两项 `Comparison exit code` 和 `Final exit code` 均须为 `0`。
+三个正式测试点 `0`、`1`、`2` 的提交结果必须分别在 Slurm 作业中由 `python scripts/run.py <id> --compare` 或等价的 Make 入口生成。每个测试点的流水线及 PE、tvE 两项比较均须成功，作业标准输出中的 `Pipeline exit code`、两项 `Comparison exit code` 和 `Final exit code` 均须为 `0`。
 
 浮点字段采用以下判据，其中参考值为 $r$，待测值为 $x$：
 
@@ -228,6 +242,9 @@ $$
 - PE 结果按 `(eid, ch, step)` 对齐，比较 PE 时间、增益成分及相应权重等字段。
 - tvE 结果按 `(EventID, step)` 对齐，逐步比较活动顶点和事例级状态；活动顶点按保存的槽位顺序比较。
 - 编号、计数、标志和数组长度等离散数据必须精确匹配；记录缺失或多出均不能通过。详细字段与缺失值处理规则见 [test/README.md](test/README.md)。
+
+校验覆盖全部已保存的 PE 状态和完整重建链，不只比较链末段的均值或分布。
+浮点字段允许上述误差，不要求逐位相同；但浮点误差若改变了采样接受判断，导致离散状态不同或后续链超出容差，仍不能通过。
 
 可对已有输出单独执行校验，用于调试：
 
@@ -300,9 +317,19 @@ $$
 - 未通过 Slurm 提交计算任务、跨节点运行、使用超过两张 GPU，或超过主办方规定的其他资源配额。
 - 缺失必需的正确性或计时记录，或提交的结果、日志和计时记录不属于同一次运行。
 
+## 可优化方向
+
+保持数学模型、计算规模和随机量映射不变，优化后须通过三个正式点的完整校验。
+
+1. **数值精度**：尝试 FP64（双精度）转 FP32（单精度）或混合精度，必须通过完整 PE、tvE 精度校验；
+2. **CPU／GPU 同步与通信**：减少同步等待和小规模拷贝，合并传输、复用缓冲区，重叠数据准备与计算；
+3. **GPU 计算与代码重写**：将适合并行的 CPU 循环改为批量 GPU 运算，尝试向量化、算子融合和自定义 CUDA kernel；
+4. **数据搬运与文件 I/O**：减少重复的 CPU／GPU 搬运和阶段间写盘后再读入，优化批量读写与压缩；必交产物仍须在本次计时内生成；
+5. **双卡并行**：按独立波形或事例分配双卡任务，平衡负载，保持随机量归属和输出槽位顺序。
+
 ## 提交要求
 
-提交源码或补丁、实际使用的 `run.slurm`、环境与运行说明，以及 `report.md` 或 `report.pdf`。报告应说明发现的性能瓶颈、优化方法、运行配置，并分别列出测试点 `0`、`1`、`2` 的作业编号、正确性结果、优化前后的完整流程耗时和加速比，鼓励提供分阶段耗时图表。提交渠道和截止时间以比赛通知为准。
+提交源码或补丁、实际使用的 `run.slurm`、环境与运行说明，以及 `report.md` 或 `report.pdf`。报告应说明发现的性能瓶颈、优化方法、Python／Make 入口、GPU 数量、数值精度与软件版本，并分别列出测试点 `0`、`1`、`2` 的作业编号、正确性结果、优化前后的完整流程耗时和加速比，鼓励提供分阶段耗时图表。提交渠道和截止时间以比赛通知为准。
 
 **必须提交测试点 `0`、`1`、`2` 全部三个点的日志和生成数据；示例点 `one` 无需提交。** 对每个正式测试点，将下表中的 `<id>` 替换为 `0`、`1` 或 `2`，提交该点同一次运行产生的以下文件：
 
