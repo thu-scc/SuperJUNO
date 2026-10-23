@@ -9,16 +9,16 @@ description = "PMT waveform and event reconstruction pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "cupy",
-    "numpy",
-    "scipy",
-    "h5py",
-    "hdf5plugin",
-    "pandas",
-    "pyarrow",
-    "numexpr",
-    "duckdb",
-    "tqdm",
+    "cupy==14.2.0",
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    "h5py==3.16.0",
+    "hdf5plugin==7.1.0",
+    "pandas==3.0.6",
+    "pyarrow==26.0.0",
+    "numexpr==2.14.2",
+    "duckdb==1.5.6",
+    "tqdm==4.70.1",
 ]
 
 [tool.setuptools]
